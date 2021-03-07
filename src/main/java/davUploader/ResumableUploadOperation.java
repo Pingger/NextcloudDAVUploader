@@ -35,6 +35,16 @@ public class ResumableUploadOperation extends JPanel implements Runnable
 	private static byte[]	CHUNK_TRANSMISSION_FINALIZER	= "0\r\n\r\n".getBytes(StandardCharsets.UTF_8);
 	private static byte[]	CRLF							= "\r\n".getBytes(StandardCharsets.UTF_8);
 
+	/**
+	 * Parses a String that matches the HTTPHeader without the initial request line.
+	 * This does parse the entire string supplied and skips over empty lines!
+	 *
+	 * @implNote Header-Keys are converted to <b>lowercase</b>!
+	 * @param string
+	 *            the string to parse
+	 * @param headers
+	 *            the Map to put the headers into
+	 */
 	protected static void parseHTTPHeadersToMap(String string, HashMap<String, String> headers)
 	{
 		String[] lines = string.split("\r\n");
@@ -46,30 +56,38 @@ public class ResumableUploadOperation extends JPanel implements Runnable
 		}
 	}
 
+	/** The ID generated for the temporary Upload-Location */
 	public final long				customID;
+	/** The base URL of the Server */
 	public final String				server;
+	/** The Source File */
 	public final File				source;
+	/** The Target Path on the Server (including the filename) */
 	public final String				targetPath;
+	/** The Nextcloud-Username */
 	public final String				user;
 	protected JPanel				detailPanel;
+
 	protected JLabel				lblFailures;
 	protected JLabel				lblFile;
 	protected JLabel				lblFullpath;
 	protected JLabel				lblStatus;
 	protected JLabel				lblTarget;
-
 	protected Panel					wrapperPanel;
-
+	/** Basically the speedlimit */
 	private int						bytesPerSecondTarget	= 1024 * 1024;
 
+	/**
+	 * The amount of bytes uploaded "this second". Not perfectly accurate, but good
+	 * enough.
+	 */
 	private long					bytesThisSecond			= 0;
-
+	/** The time, when "this second" started */
 	private long					bytesThisSecondStart	= 0;
-
+	/** Exceptions are put into this List */
 	private LinkedList<Exception>	exceptions				= new LinkedList<>();
-
+	/** The Password/ApplicationToken */
 	private final String			pass;
-
 	/** The start location of the current Segment in the entire source Stream */
 	private long					segmentStartLocation	= 0;
 
@@ -78,20 +96,30 @@ public class ResumableUploadOperation extends JPanel implements Runnable
 
 	/** The source Stream */
 	private InputStream				sourceStream			= null;
+
 	/** The Location in the Source Stream */
 	private long					sourceStreamLocation	= 0;
 	/** Lock for actions on the sourceStream */
 	private Object					sourceStreamLock		= new Object();
+	/**
+	 * the complete target URL, so we have a URL to get some info from without
+	 * parsing ourselves
+	 */
+	private final URL				target;
 	/** How much has been uploaded */
 	private long					uploaded				= 0;
+	/**
+	 * List of the previous {@link #uploadSpeedHistorySize} values of
+	 * {@link #bytesThisSecond}. Newest value is at the End.
+	 */
 	private LinkedList<Long>		uploadSpeedHistory		= new LinkedList<>();
+	private int						uploadSpeedHistorySize	= 60;
 
 	private ResumableUploadOperation(File source, String targetPath, String serverBase, String user, String pass) throws MalformedURLException
 	{
 		super(new BorderLayout());
 		// Validate if a proper URL can be formed.
-		URL u = new URL(serverBase + "/remote.php/dav/files/" + user + "/" + targetPath);
-		u.getHost();
+		target = new URL(serverBase + "/remote.php/dav/files/" + user + "/" + targetPath);
 		this.size = source.length();
 		customID = size * 11 * 13 * 17 + source.lastModified() * 13 * 17 + targetPath.hashCode() * 17;
 		this.source = source;
@@ -380,7 +408,7 @@ public class ResumableUploadOperation extends JPanel implements Runnable
 	{
 		if (bytesThisSecondStart + 1e3 < System.currentTimeMillis()) {
 			uploadSpeedHistory.add(bytesThisSecond);
-			while (uploadSpeedHistory.size() > 60) {
+			while (uploadSpeedHistory.size() > uploadSpeedHistorySize) {
 				uploadSpeedHistory.removeFirst();
 			}
 			bytesThisSecond = 0;
