@@ -1,9 +1,5 @@
 package davUploader;
 
-import java.awt.BorderLayout;
-import java.awt.GridBagConstraints;
-import java.awt.GridBagLayout;
-import java.awt.Panel;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
@@ -23,14 +19,12 @@ import java.util.HashMap;
 import java.util.LinkedList;
 
 import javax.net.ssl.SSLSocketFactory;
-import javax.swing.JLabel;
-import javax.swing.JPanel;
 
 /**
  * @author Pingger
  *
  */
-public class ResumableUploadOperation extends JPanel implements Runnable
+public class ResumableUploadOperation implements Runnable
 {
 	private static byte[]	CHUNK_TRANSMISSION_FINALIZER	= "0\r\n\r\n".getBytes(StandardCharsets.UTF_8);
 	private static byte[]	CRLF							= "\r\n".getBytes(StandardCharsets.UTF_8);
@@ -66,14 +60,6 @@ public class ResumableUploadOperation extends JPanel implements Runnable
 	public final String				targetPath;
 	/** The Nextcloud-Username */
 	public final String				user;
-	protected JPanel				detailPanel;
-
-	protected JLabel				lblFailures;
-	protected JLabel				lblFile;
-	protected JLabel				lblFullpath;
-	protected JLabel				lblStatus;
-	protected JLabel				lblTarget;
-	protected Panel					wrapperPanel;
 	/** Basically the speedlimit */
 	private int						bytesPerSecondTarget	= 1024 * 1024;
 
@@ -117,7 +103,6 @@ public class ResumableUploadOperation extends JPanel implements Runnable
 
 	private ResumableUploadOperation(File source, String targetPath, String serverBase, String user, String pass) throws MalformedURLException
 	{
-		super(new BorderLayout());
 		// Validate if a proper URL can be formed.
 		target = new URL(serverBase + "/remote.php/dav/files/" + user + "/" + targetPath);
 		this.size = source.length();
@@ -134,16 +119,6 @@ public class ResumableUploadOperation extends JPanel implements Runnable
 	{
 		// TODO Auto-generated method stub
 
-	}
-
-	protected void buildPanels()
-	{
-		removeAll();
-		GridBagConstraints gbc = new GridBagConstraints();
-		gbc.fill = GridBagConstraints.BOTH;
-		gbc.anchor = GridBagConstraints.BASELINE_LEADING;
-		JPanel north = new JPanel(new GridBagLayout());
-		north.add(lblStatus = new JLabel("CREATED"), gbc);
 	}
 
 	/**
