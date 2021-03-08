@@ -169,10 +169,23 @@ public class ResumableUploadOperation extends JPanel implements Runnable
 	}
 
 	/**
+	 *
+	 * @return a new InputStream
+	 * @throws IOException
+	 *             of opening the Stream fails
+	 */
+	protected InputStream openNewSourceStream() throws IOException
+	{
+		return new FileInputStream(source);
+	}
+
+	/**
 	 * Opens the SourceStream and resets the sourceStreamLocation
 	 *
 	 * @throws IOException
 	 *             if the source can't be opened
+	 * @implNote instead of overwriting this, instead overwrite
+	 *           {@link #openNewSourceStream()}
 	 */
 	protected void openSourceStream() throws IOException
 	{
@@ -184,7 +197,7 @@ public class ResumableUploadOperation extends JPanel implements Runnable
 				catch (Exception ignore) {
 				}
 			}
-			sourceStream = new FileInputStream(source);
+			sourceStream = openNewSourceStream();
 			sourceStreamLocation = 0;
 		}
 	}
