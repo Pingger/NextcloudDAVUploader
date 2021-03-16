@@ -1,11 +1,10 @@
 package davUploader;
 
-import java.io.BufferedReader;
+import java.awt.Component;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.math.BigInteger;
 import java.net.MalformedURLException;
@@ -52,6 +51,7 @@ public class ResumableUploadOperation implements Runnable
 
 	/** The ID generated for the temporary Upload-Location */
 	public final long				customID;
+
 	/** The base URL of the Server */
 	public final String				server;
 	/** The Source File */
@@ -60,9 +60,11 @@ public class ResumableUploadOperation implements Runnable
 	public final String				targetPath;
 	/** The Nextcloud-Username */
 	public final String				user;
+	protected long					lastRepaint				= 0;
+	protected Component				uiElement				= null;
+
 	/** Basically the speedlimit */
 	private int						bytesPerSecondTarget	= 1024 * 1024;
-
 	/**
 	 * The amount of bytes uploaded "this second". Not perfectly accurate, but good
 	 * enough.
@@ -70,19 +72,21 @@ public class ResumableUploadOperation implements Runnable
 	private long					bytesThisSecond			= 0;
 	/** The time, when "this second" started */
 	private long					bytesThisSecondStart	= 0;
+	private long					currentSegmentNumber	= 1;
 	/** Exceptions are put into this List */
 	private LinkedList<Exception>	exceptions				= new LinkedList<>();
+
+	private boolean					isWindowFocused			= false;
+
 	/** The Password/ApplicationToken */
 	private final String			pass;
+
 	/** The start location of the current Segment in the entire source Stream */
 	private long					segmentStartLocation	= 0;
-
 	/** size of the Source */
 	private final long				size;
-
 	/** The source Stream */
 	private InputStream				sourceStream			= null;
-
 	/** The Location in the Source Stream */
 	private long					sourceStreamLocation	= 0;
 	/** Lock for actions on the sourceStream */
@@ -92,13 +96,16 @@ public class ResumableUploadOperation implements Runnable
 	 * parsing ourselves
 	 */
 	private final URL				target;
+
 	/** How much has been uploaded */
 	private long					uploaded				= 0;
+
 	/**
 	 * List of the previous {@link #uploadSpeedHistorySize} values of
 	 * {@link #bytesThisSecond}. Newest value is at the End.
 	 */
 	private LinkedList<Long>		uploadSpeedHistory		= new LinkedList<>();
+
 	private int						uploadSpeedHistorySize	= 60;
 
 	private ResumableUploadOperation(File source, String targetPath, String serverBase, String user, String pass) throws MalformedURLException
@@ -191,31 +198,41 @@ public class ResumableUploadOperation implements Runnable
 	 */
 	protected void parseSegmentResponse(InputStream in, SegmentUploadInfo sui) throws IOException, InterruptedException
 	{
-		try (BufferedReader br = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
-			long start = System.currentTimeMillis();
-			while (!br.ready() && start + 5_000 < System.currentTimeMillis()) {
-				Thread.sleep(5);
-			}
-			if (!br.ready()) { throw new IOException("No Data received!"); }
-			start = System.currentTimeMillis();
-			sui.responseHeader = br.readLine();
-			sui.responseCode = Integer.parseInt(sui.responseHeader.split(" ", 3)[1]);
-			sui.responseMessage = sui.responseHeader.split(" ", 3)[2];
-			StringBuilder sb = new StringBuilder();
-			String line = null;
-			while ((line == null || !line.trim().isEmpty()) && start + 5_000 < System.currentTimeMillis()) {
-				if (!br.ready()) {
-					Thread.sleep(50);
-					continue;
-				}
-				line = br.readLine();
-				if (line == null) {
-					continue;
-				}
-				sb.append(line + "\r\n");
-			}
-			parseHTTPHeadersToMap(sb.toString(), sui.headers);
+		sui.httpResponse = new HTTPResponse(in);
+	}
+
+	/**
+	 * Checks if and how many chunks have already been uploaded.
+	 */
+	protected void readCurrentStatus()
+	{
+
+	}
+
+	/**
+	 * Called upon non-important ui changes. Mainly everytime a few bytes were
+	 * uploaded. This ensures, that the UI is not repainted thousands of times per
+	 * second, but instead ~30 times if focused and only once per second if not.<br>
+	 * <br>
+	 * Some UI Changes, such as State changes, force the UI to update and ignore
+	 * this restriction.
+	 *
+	 */
+	protected void smartSelfRepaint()
+	{
+		if (uiElement == null) { return; }
+		long now = System.currentTimeMillis();
+		if (isWindowFocused && lastRepaint + 33 < now || lastRepaint + 1000 < now) {
+			uiElement.repaint();
 		}
+	}
+
+	protected void startUpload() throws Exception, IOException
+	{
+		HTTPResponse r = withSocket((s, in, out) -> {
+			String request = "";
+			return new HTTPResponse(in);
+		});
 	}
 
 	/**
@@ -230,11 +247,11 @@ public class ResumableUploadOperation implements Runnable
 	 */
 	protected void validateSegmentResponse(SegmentUploadInfo sui) throws IOException
 	{
-		if (sui.responseCode < 200 || sui.responseCode >= 300) {
-			throw new IOException("Bad Response Code! " + sui.responseCode + " " + sui.responseMessage);
+		if (sui.httpResponse.responseCode < 200 || sui.httpResponse.responseCode >= 300) {
+			throw new IOException("Bad Response Code! " + sui.httpResponse.responseCode + " " + sui.httpResponse.responseMessage);
 		}
-		if (!sui.headers.containsKey("X-Hash-SHA256".toLowerCase())) { throw new IOException("No SHA256 provided by Server!"); }
-		String sha256server = sui.headers.get("X-Hash-SHA256".toLowerCase());
+		if (!sui.httpResponse.headers.containsKey("X-Hash-SHA256".toLowerCase())) { throw new IOException("No SHA256 provided by Server!"); }
+		String sha256server = sui.httpResponse.headers.get("X-Hash-SHA256".toLowerCase());
 		if (sui.sha256.equalsIgnoreCase(sha256server)) {
 			throw new IOException("Invalid SHA256 provided by Server! (Server: " + sha256server + " | Own: " + sui.sha256);
 		}
@@ -293,10 +310,10 @@ public class ResumableUploadOperation implements Runnable
 	{
 		return withSocket((s, in, out) -> {
 			/*
-			 * PUT /remote.php/dav/uploads/<user>/<uploadID>/<segmentNumber>
+			 * PUT /remote.php/dav/uploads/<user>/<uploadID>/<8-digit segmentNumber>
 			 * <- 201 Created
 			 */
-			String segmentPath = "";
+			String segmentPath = "remote.php/dav/uploads/" + user + "/" + customID + "/" + String.format("%8d", currentSegmentNumber);
 			long segmentStart = -1;
 			int segmentLength = -1;
 			writeSegmentHeader(out, segmentPath, segmentStart, segmentLength);
@@ -403,6 +420,7 @@ public class ResumableUploadOperation implements Runnable
 			bytesThisSecondStart = System.currentTimeMillis();
 		}
 		bytesThisSecond += count;
+		smartSelfRepaint();
 	}
 
 	/**
@@ -451,17 +469,14 @@ public class ResumableUploadOperation implements Runnable
 
 	private static class SegmentUploadInfo
 	{
-		private static final String		SHA256FILL	= "0000000000000000000000000000000000000000000000000000000000000000";
-		public long						end;
-		public HashMap<String, String>	headers;
-		public MessageDigest			md;
-		public int						responseCode;
-		public String					responseHeader;
-		public String					responseMessage;
-		public String					sha256;
-		public long						start;
-		public boolean					validated;
-		public int						written;
+		private static final String	SHA256FILL	= "0000000000000000000000000000000000000000000000000000000000000000";
+		public long					end;
+		public HTTPResponse			httpResponse;
+		public MessageDigest		md;
+		public String				sha256;
+		public long					start;
+		public boolean				validated;
+		public int					written;
 
 		public SegmentUploadInfo()
 		{
